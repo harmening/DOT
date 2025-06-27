@@ -1,51 +1,137 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
 import ast
 
-# Load Data
+st.title("🧠 DOT Image Recon Explorer")
+
+def format_stat(median, std):
+    return f"{median:.2f} ± {std:.2f} mm"
+
 @st.cache_data
 def load_data():
-    # Replace with actual URL or local path
-    df = pd.read_csv("datalist.tsv", sep='\t')
+    df = pd.read_csv("datalist.tsv", sep="\t")
 
-    # Convert stringified tuples like "(13.3, 9.1)" into actual tuples
+    def safe_parse(x):
+        try:
+            if isinstance(x, str) and x.startswith("("):
+                return ast.literal_eval(x)
+        except Exception:
+            pass
+        return (np.nan, np.nan)
+
     for col in df.columns:
-        if df[col].astype(str).str.startswith("(").any():
-            df[col] = df[col].apply(lambda x: ast.literal_eval(x) if isinstance(x, str) and x.startswith("(") else (np.nan, np.nan))
-    
+        if col.endswith("_median_std"):
+            df[col] = df[col].apply(safe_parse)
     return df
 
 df = load_data()
 
-st.title("🧠 Brain Parcel Explorer")
+HEAD_MODEL_MAP = {
+    "original": "recon_original",
+    "TwoSurfaceHeadmodel (TSHM)": "recon_TSHM",
+    "sBrain": "recon_sBrain",
+    "PCAwarp": "recon_PCAwarp",
+    "wMNI-FEM": "recon_wMNi-FEM",
+    "wMNI-4": "recon_wMNI-4",
+    "ICBM-152": "recon_ICBM-152",
+    "Colin27": "recon_Colin27",
+}
 
-# Filter by parcel name
-parcels = df["parcel"].unique()
-selected_parcels = st.multiselect("Select parcels", parcels, default=parcels[:5])
+# === Sidebar filters ===
+st.sidebar.header("Filter Options")
 
-filtered_df = df[df["parcel"].isin(selected_parcels)]
+probes = ["sparse", "HD", "UHD"]
+selected_probe = st.sidebar.selectbox("Probe type", options=probes, index=1)
 
-# Column selection
-numeric_columns = [col for col in df.columns if df[col].dtype == object or isinstance(df[col].iloc[0], tuple)]
-selected_metric = st.selectbox("Select metric column", numeric_columns)
+networks = ["ALL"] + sorted(df["17Networks"].dropna().unique())
+selected_network = st.sidebar.selectbox("17Networks", options=networks, index=0)
 
-# Extract tuple components for plotting
-def extract_component(series, index):
-    return series.apply(lambda x: x[index] if isinstance(x, tuple) else np.nan)
+head_models = ["ALL"] + list(HEAD_MODEL_MAP.keys())
+selected_head_model = st.sidebar.selectbox("Head model", options=head_models, index=0)
 
-component = st.radio("Component to visualize", ["First", "Second"])
-index = 0 if component == "First" else 1
+svr_values = ["ALL", 0.001, 0.01, 0.1]
+selected_svr = st.sidebar.selectbox("SVR parameter", options=svr_values, index=3)
 
-filtered_df["metric_value"] = extract_component(filtered_df[selected_metric], index)
+# === Filter rows ===
+if selected_network != "ALL":
+    filtered_df = df[df["17Networks"] == selected_network]
+else:
+    filtered_df = df.copy()
 
-# Table view
-st.subheader("📊 Filtered Data")
-st.dataframe(filtered_df[["parcel", "metric_value"]])
+st.subheader("Filter results by choosing your setup on the left")
 
-# Plotting
-st.subheader("📈 Plot")
-fig = px.bar(filtered_df, x="parcel", y="metric_value", title=f"{selected_metric} ({component})")
-fig.update_layout(xaxis_tickangle=-45)
-st.plotly_chart(fig, use_container_width=True)
+def format_stat(median, std):
+    return f"{median:.2f} ± {std:.2f} mm"
+
+# === Handle ALL combinations ===
+results = []
+
+if selected_head_model == "ALL":
+    head_model_keys = list(HEAD_MODEL_MAP.keys())
+else:
+    head_model_keys = [selected_head_model]
+
+if selected_svr == "ALL":
+    svr_keys = [0.001, 0.01, 0.1]
+else:
+    svr_keys = [selected_svr]
+
+for model in head_model_keys:
+    for svr in svr_keys:
+        prefix = HEAD_MODEL_MAP[model]
+        colname = f"{prefix}_svr{svr}_{selected_probe}_median_std"
+
+        if colname not in df.columns:
+            continue
+
+        valid_values = filtered_df[colname].dropna()
+        medians = [v[0] for v in valid_values if isinstance(v, tuple) and not np.isnan(v[0])]
+        stds = [v[1] for v in valid_values if isinstance(v, tuple) and not np.isnan(v[1])]
+
+        if len(medians) == 0 or len(stds) == 0:
+            continue
+
+        avg_median = np.nanmedian(medians)
+        avg_std = np.nanstd(stds)
+
+        results.append({
+            "Head Model": model,
+            "SVR": svr,
+            "Probe": selected_probe,
+            "Median ± Std": format_stat(avg_median, avg_std),
+            "Column": colname
+        })
+
+# === Display results ===
+if len(results) == 0:
+    st.warning("No valid data for selected combination(s).")
+else:
+    results_df = pd.DataFrame(results)
+    st.dataframe(results_df[["Head Model", "SVR", "Median ± Std"]])
+    
+    with st.expander("Show matching parcels"):
+        display_df = filtered_df[["parcel", "num_vox"]].copy()
+
+        if selected_head_model == "ALL" or selected_svr == "ALL":
+            # Multiple columns case
+            columns_to_display = []
+            for head_model in [selected_head_model] if selected_head_model != "ALL" else [hm for hm in head_models if hm != "ALL"]:
+                for svr in [selected_svr] if selected_svr != "ALL" else svr_values:
+                    prefix = HEAD_MODEL_MAP[head_model]
+                    col = f"{prefix}_svr{svr}_{selected_probe}_median_std"
+                    if col in filtered_df.columns:
+                        label = f"{head_model} / SVR {svr}"
+                        display_df[label] = filtered_df[col].apply(
+                            lambda val: format_stat(val[0], val[1]) if isinstance(val, tuple) and not np.isnan(val[0]) else "N/A"
+                        )
+                        columns_to_display.append(label)
+            st.dataframe(display_df[["parcel", "num_vox"] + columns_to_display])
+
+        else:
+            # Single column case
+            col = f"{HEAD_MODEL_MAP[selected_head_model]}_svr{selected_svr}_{selected_probe}_median_std"
+            display_df["Median ± Std"] = filtered_df[col].apply(
+                lambda val: format_stat(val[0], val[1]) if isinstance(val, tuple) and not np.isnan(val[0]) else "N/A"
+            )
+            st.dataframe(display_df[["parcel", "num_vox", "Median ± Std"]])
