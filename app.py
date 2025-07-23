@@ -1,137 +1,93 @@
 import streamlit as st
-import pandas as pd
 import numpy as np
-import ast
+import pandas as pd
+import glob
 
+st.set_page_config(page_title="🧠 DOT Image Recon Explorer", layout="wide")
 st.title("🧠 DOT Image Recon Explorer")
 
-def format_stat(median, std):
-    return f"{median:.2f} ± {std:.2f} mm"
-
+# === Load data ===
 @st.cache_data
 def load_data():
-    df = pd.read_csv("datalist.tsv", sep="\t")
+    # Load all split chunk files
+    chunk_files = sorted(glob.glob("data_chunk_*.npz"))
+    
+    all_rows = []
+    meta = None
 
-    def safe_parse(x):
-        try:
-            if isinstance(x, str) and x.startswith("("):
-                return ast.literal_eval(x)
-        except Exception:
-            pass
-        return (np.nan, np.nan)
+    for file in chunk_files:
+        chunk = np.load(file, allow_pickle=True)["data"].item()
+        all_rows.extend(chunk["rows"])
+        if meta is None:
+            meta = chunk["meta"]  # Assume consistent metadata
 
-    for col in df.columns:
-        if col.endswith("_median_std"):
-            df[col] = df[col].apply(safe_parse)
-    return df
+    df = pd.DataFrame(all_rows)
+    return df, meta
 
-df = load_data()
+#@st.cache_data
+#def load_data():
+#    data = np.load("data_dict.npy", allow_pickle=True).item()
+#    df = pd.DataFrame(data["rows"])
+#    return df, data["meta"]
 
-HEAD_MODEL_MAP = {
-    "original": "recon_original",
-    "TwoSurfaceHeadmodel (TSHM)": "recon_TSHM",
-    "sBrain": "recon_sBrain",
-    "PCAwarp": "recon_PCAwarp",
-    "wMNI-FEM": "recon_wMNi-FEM",
-    "wMNI-4": "recon_wMNI-4",
-    "ICBM-152": "recon_ICBM-152",
-    "Colin27": "recon_Colin27",
-}
+df, meta = load_data()
 
 # === Sidebar filters ===
 st.sidebar.header("Filter Options")
 
-probes = ["sparse", "HD", "UHD"]
-selected_probe = st.sidebar.selectbox("Probe type", options=probes, index=1)
+selected_probe = st.sidebar.selectbox("Probe type", options=["ALL"] + meta["probes"], index=2)
+selected_network = st.sidebar.selectbox("17Networks", options=["ALL"] + sorted(df["17Networks"].dropna().unique()), index=0)
+selected_head_model = st.sidebar.selectbox("Head model", options=["ALL"] + meta["head_models"], index=0)
+selected_svr = st.sidebar.selectbox("SVR parameter", options=["ALL"] + [str(v) for v in meta["svr_values"]], index=3)
 
-networks = ["ALL"] + sorted(df["17Networks"].dropna().unique())
-selected_network = st.sidebar.selectbox("17Networks", options=networks, index=0)
+min_depth, max_depth = st.sidebar.slider("Depth range (mm)", 0.0, 40.0, (0.0, 40.0))
+min_sens, max_sens = st.sidebar.slider("Sensitivity range", 0.0, 1.0, (0.0, 1.0))
 
-head_models = ["ALL"] + list(HEAD_MODEL_MAP.keys())
-selected_head_model = st.sidebar.selectbox("Head model", options=head_models, index=0)
-
-svr_values = ["ALL", 0.001, 0.01, 0.1]
-selected_svr = st.sidebar.selectbox("SVR parameter", options=svr_values, index=3)
-
-# === Filter rows ===
+# === Filter dataframe by network ===
 if selected_network != "ALL":
     filtered_df = df[df["17Networks"] == selected_network]
 else:
     filtered_df = df.copy()
 
-st.subheader("Filter results by choosing your setup on the left")
+st.subheader("Filtered Summary Results")
 
-def format_stat(median, std):
-    return f"{median:.2f} ± {std:.2f} mm"
-
-# === Handle ALL combinations ===
+# === Generate results table ===
 results = []
 
-if selected_head_model == "ALL":
-    head_model_keys = list(HEAD_MODEL_MAP.keys())
-else:
-    head_model_keys = [selected_head_model]
+head_models = meta["head_models"] if selected_head_model == "ALL" else [selected_head_model]
+svr_values = meta["svr_values"] if selected_svr == "ALL" else [float(selected_svr)]
 
-if selected_svr == "ALL":
-    svr_keys = [0.001, 0.01, 0.1]
-else:
-    svr_keys = [selected_svr]
-
-for model in head_model_keys:
-    for svr in svr_keys:
-        prefix = HEAD_MODEL_MAP[model]
-        colname = f"{prefix}_svr{svr}_{selected_probe}_median_std"
-
-        if colname not in df.columns:
+for model in head_models:
+    for svr in svr_values:
+        key = f"recon_{selected_probe}_{model}_svr{svr}"
+        if key not in df.columns:
             continue
+        locerrors = []
+        for val_list in filtered_df[key]:
+            if not isinstance(val_list, list):
+                continue
+            for val in val_list:
+                #if not isinstance(val, (list, tuple)) or len(val) != 3:
+                #    continue
+                locerror, sensitivity,depth = val
+                if min_depth <= depth <= max_depth and min_sens <= sensitivity <= max_sens:
+                    locerrors.append(locerror)
 
-        valid_values = filtered_df[colname].dropna()
-        medians = [v[0] for v in valid_values if isinstance(v, tuple) and not np.isnan(v[0])]
-        stds = [v[1] for v in valid_values if isinstance(v, tuple) and not np.isnan(v[1])]
+        if locerrors:
+            median = np.median(locerrors)
+            std = np.std(locerrors)
+            results.append({
+                "Probe": selected_probe,
+                "Head Model": model,
+                "SVR": svr,
+                "Number of placed synth. HRFs": len(locerrors),
+                "Median ± Std": f"{median:.2f} ± {std:.2f} mm",
+            })
 
-        if len(medians) == 0 or len(stds) == 0:
-            continue
-
-        avg_median = np.nanmedian(medians)
-        avg_std = np.nanstd(stds)
-
-        results.append({
-            "Head Model": model,
-            "SVR": svr,
-            "Probe": selected_probe,
-            "Median ± Std": format_stat(avg_median, avg_std),
-            "Column": colname
-        })
-
-# === Display results ===
-if len(results) == 0:
+# === Display summary results ===
+if not results:
     st.warning("No valid data for selected combination(s).")
 else:
     results_df = pd.DataFrame(results)
-    st.dataframe(results_df[["Head Model", "SVR", "Median ± Std"]])
-    
-    with st.expander("Show matching parcels"):
-        display_df = filtered_df[["parcel", "num_vox"]].copy()
+    st.dataframe(results_df)
 
-        if selected_head_model == "ALL" or selected_svr == "ALL":
-            # Multiple columns case
-            columns_to_display = []
-            for head_model in [selected_head_model] if selected_head_model != "ALL" else [hm for hm in head_models if hm != "ALL"]:
-                for svr in [selected_svr] if selected_svr != "ALL" else svr_values:
-                    prefix = HEAD_MODEL_MAP[head_model]
-                    col = f"{prefix}_svr{svr}_{selected_probe}_median_std"
-                    if col in filtered_df.columns:
-                        label = f"{head_model} / SVR {svr}"
-                        display_df[label] = filtered_df[col].apply(
-                            lambda val: format_stat(val[0], val[1]) if isinstance(val, tuple) and not np.isnan(val[0]) else "N/A"
-                        )
-                        columns_to_display.append(label)
-            st.dataframe(display_df[["parcel", "num_vox"] + columns_to_display])
-
-        else:
-            # Single column case
-            col = f"{HEAD_MODEL_MAP[selected_head_model]}_svr{selected_svr}_{selected_probe}_median_std"
-            display_df["Median ± Std"] = filtered_df[col].apply(
-                lambda val: format_stat(val[0], val[1]) if isinstance(val, tuple) and not np.isnan(val[0]) else "N/A"
-            )
-            st.dataframe(display_df[["parcel", "num_vox", "Median ± Std"]])
