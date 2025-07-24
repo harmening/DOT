@@ -35,7 +35,7 @@ df, meta = load_data()
 # === Sidebar filters ===
 st.sidebar.header("Filter Options")
 
-selected_probe = st.sidebar.selectbox("Probe type", options=["ALL"] + meta["probes"], index=2)
+selected_probe = st.sidebar.selectbox("Probe type", options=meta["probes"], index=1)
 selected_network = st.sidebar.selectbox("17Networks", options=["ALL"] + sorted(df["17Networks"].dropna().unique()), index=0)
 selected_head_model = st.sidebar.selectbox("Head model", options=["ALL"] + meta["head_models"], index=0)
 selected_svr = st.sidebar.selectbox("SVR parameter", options=["ALL"] + [str(v) for v in meta["svr_values"]], index=3)
@@ -91,3 +91,69 @@ else:
     results_df = pd.DataFrame(results)
     st.dataframe(results_df)
 
+
+
+
+
+
+# === Per-parcel breakdown ===
+st.subheader("Results for each parcel")
+
+parcel_data = {}
+
+for _, row in filtered_df.iterrows():
+    parcel = row.get("parcel", "unknown")
+    try:
+        depth_arr = row["Depth"][selected_probe]
+        sens_arr = row["Sensitivity"][selected_probe]
+        size_arr = row["Number of voxels"][selected_probe]
+    except KeyError:
+        continue
+
+    # Apply depth/sensitivity filter
+    mask = (depth_arr >= min_depth) & (depth_arr <= max_depth) & (sens_arr >= min_sens) & (sens_arr <= max_sens)
+    depth_filtered = depth_arr[mask]
+    sens_filtered = sens_arr[mask]
+
+    if len(depth_filtered) == 0 or len(sens_filtered) == 0:
+        continue
+
+    # Initialize parcel entry
+    if parcel not in parcel_data:
+        parcel_data[parcel] = {
+        "Parcel": parcel,
+        "Sensitivity (±)": f"{np.median(sens_filtered):.3f} ± {np.std(sens_filtered):.3f}",
+        "Depth (±)": f"{np.median(depth_filtered):.2f} ± {np.std(depth_filtered):.2f}",
+        "Parcel Size (Number of voxels)": f"{size_arr}",
+        "Num HRFs": len(mask),
+        }
+
+    # Handle all relevant recon_* keys
+    for model in head_models:
+        for svr in svr_values:
+            recon_key = f"recon_{selected_probe}_{model}_svr{svr}"
+            if recon_key not in row:
+                continue
+            val_list = row[recon_key]
+            if not isinstance(val_list, list):
+                continue
+
+            locerrors = []
+            for val in val_list:
+                if not isinstance(val, (list, tuple)) or len(val) < 1:
+                    continue
+                locerrors.append(val[0])  # locerror only
+
+            if locerrors:
+                colname = f"LocErr {model} svr{svr}"
+                median = np.median(locerrors)
+                std = np.std(locerrors)
+                parcel_data[parcel][colname] = f"{median:.2f} ± {std:.2f}"
+
+# Create and display dataframe
+if parcel_data:
+    parcel_df = pd.DataFrame(parcel_data.values())
+    parcel_df = parcel_df.sort_values(by="Parcel")
+    st.dataframe(parcel_df)
+else:
+    st.info("No parcels matched your filtering criteria.")
