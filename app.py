@@ -122,10 +122,10 @@ for _, row in filtered_df.iterrows():
     if parcel not in parcel_data:
         parcel_data[parcel] = {
         "Parcel": parcel,
-        "Sensitivity (±)": f"{np.median(sens_filtered):.3f} ± {np.std(sens_filtered):.3f}",
-        "Depth (±)": f"{np.median(depth_filtered):.2f} ± {np.std(depth_filtered):.2f}",
         "Parcel Size (Number of voxels)": f"{size_arr}",
-        "Num HRFs": len(mask),
+        "Depth (±)": f"{np.median(depth_filtered):.2f} ± {np.std(depth_filtered):.2f}",
+        "Sensitivity (±)": f"{np.median(sens_filtered):.3f} ± {np.std(sens_filtered):.3f}",
+        #"Num HRFs": len(sens_filtered),
         }
 
     # Handle all relevant recon_* keys
