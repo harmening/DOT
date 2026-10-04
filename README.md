@@ -11,7 +11,7 @@ points readers here from sections 3.1, 3.2, 3.3 and 4.
     requirements.txt
     .gitignore
 
-`app.py` holds no probe name, head model, metric, tier or regularization level.
+`app.py` holds no probe name, head model, metric, source sample or regularization level.
 Every option list comes out of `data/meta.json`, so adding a metric or a
 regularization to the bundle adds it to the app with no code change.
 
@@ -69,7 +69,7 @@ second reproduces the paper's published numbers from the bundle alone.
 
 ## What the default view shows
 
-The paper's own selection: median-sensitivity tier, λ₁ = 0.01, λ₂ = 0.1, with
+The paper's own selection: median source sample, λ₁ = 0.01, λ₂ = 0.1, with
 measurement noise, medians taken per subject first and then across the 15. On
 that selection the original head model reads 11.49 / 9.17 / 8.19 mm median peak
 error at the sparse, medium- and high-density probe, against 11.5 / 9.2 / 8.2 in

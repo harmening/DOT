@@ -1,7 +1,7 @@
 """DOT reconstruction accuracy, the online reference work for IMAG-25-0479.
 
 Minimal v6 update of the v5 app: same two tables, plus a metric selector, a
-tier selector, the paper's probe names and the seven head models of the paper.
+source-sample selector, the paper's probe names and the seven head models of the paper.
 Every option list comes from meta.json, nothing is hard-coded here.
 """
 import os
@@ -30,7 +30,7 @@ def sources(probe):
 M = meta()
 st.caption('Companion to the head-model comparison study. Simulated sources in '
            '%d Schaefer2018 parcels, %d subjects, %d probe densities, %d head '
-           'models, %d metrics, %d sensitivity tiers. Built %s.'
+           'models, %d metrics, %d source samples. Built %s.'
            % (len(M['parcels']), 15, len(M['probes']), len(M['head_models']),
               len(M['metrics']), len(M['tiers']), M['built']))
 
@@ -51,7 +51,7 @@ paper_first = [m['name'] for m in M['metrics'] if m['in_paper']] + \
 metric = sb.selectbox('Metric', paper_first,
                       help='The first three are the ones the paper reports.')
 
-tier = sb.selectbox('Source sensitivity tier', M['tiers'] + ['all'],
+tier = sb.selectbox('Source sample', M['tiers'] + ['all'],
                     index=M['tiers'].index(M['defaults']['tier']),
                     help='Which voxel of each parcel carries the simulated '
                          'source: its most, median or least sensitive one.')

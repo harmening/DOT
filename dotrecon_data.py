@@ -1,7 +1,7 @@
 """Data layer for the DOT reference work. No streamlit, so it can be tested.
 
 Everything the app offers comes out of meta.json. Nothing here hard-codes a
-probe name, a head model, a metric, a tier or a regularization level.
+probe name, a head model, a metric, a source sample or a regularization level.
 """
 import json
 import os
@@ -76,9 +76,15 @@ def asset(data_dir, name, required=True):
 
 
 # ------------------------------------------------------------------ loading
+PAPER_NAMES = {'ICBM-152 scaled': 'ICBM-152'}
+
+
 def load_meta(data_dir=DEFAULT_DATA):
     with open(asset(data_dir, 'meta.json')) as f:
-        return json.load(f)
+        meta = json.load(f)
+    for h in meta['head_models']:
+        h['name'] = PAPER_NAMES.get(h['name'], h['name'])
+    return meta
 
 
 def load_sources(data_dir, probe):
